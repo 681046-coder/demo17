@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>คลังสินค้าคอมพิวเตอร์</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--ink:#17202b;--mut:#66717f;--line:#dde2e8;--acc:#0b6bcb;--ok:#1f8a4c;--low:#b86e00;--out:#c62f2f;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#12161c;--card:#1b212a;--ink:#e6ebf1;--mut:#94a0ae;--line:#2c3540;--acc:#5aa6f0;--ok:#4cc38a;--low:#f0b24a;--out:#ff7b72;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,"Sarabun","Noto Sans Thai",sans-serif}
+main{max-width:1040px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:1.5rem;margin:0 0 4px}
+.stats{display:flex;gap:20px;flex-wrap:wrap;margin:0 0 16px;color:var(--mut)}
+.stats b{font-size:1.25rem;color:var(--ink);margin-right:4px}
+.stats .low b{color:var(--low)}.stats .out b{color:var(--out)}
+#alerts{display:grid;gap:8px;margin-bottom:16px}
+.al{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--low);padding:8px 12px;border-radius:6px}
+.al.out{border-left-color:var(--out)}
+form.add{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:16px}
+label{display:grid;gap:2px;font-size:.85rem;color:var(--mut)}
+input,button{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+input[type=number]{width:90px}
+button{cursor:pointer}button:hover{border-color:var(--acc)}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff}
+button.x{color:var(--out)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:8px}
+table{width:100%;border-collapse:collapse;min-width:760px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-weight:600;color:var(--mut);font-size:.9rem}
+tr:last-child td{border-bottom:0}
+.m{color:var(--mut);font-size:.85rem}
+.lv{height:6px;background:var(--line);border-radius:3px;margin-top:4px;width:120px}
+.lv i{display:block;height:100%;border-radius:3px;background:var(--ok)}
+.lv i.low{background:var(--low)}.lv i.out{background:var(--out)}
+.tag{font-weight:600}.tag.ok{color:var(--ok)}.tag.low{color:var(--low)}.tag.out{color:var(--out)}
+.row input[type=number]{width:64px;padding:4px 6px}
+.empty{padding:32px;text-align:center;color:var(--mut)}
+#toasts{position:fixed;right:16px;bottom:16px;display:grid;gap:8px;z-index:9}
+.toast{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--low);padding:10px 14px;border-radius:6px;box-shadow:0 4px 16px #0003;max-width:320px}
+.toast.out{border-left-color:var(--out)}
+</style>
+</head>
+<body>
+<main>
+  <h1>คลังสินค้าคอมพิวเตอร์</h1>
+  <p class="stats" id="stats"></p>
+  <div id="alerts" aria-live="polite"></div>
+  <form class="add" id="f">
+    <label>ชื่อสินค้า<input name="name" required maxlength="60" placeholder="เช่น SSD NVMe 1TB"></label>
+    <label>หมวดหมู่<input name="cat" list="cats" maxlength="30" placeholder="เช่น Storage"></label>
+    <label>จำนวนเริ่มต้น<input name="qty" type="number" min="0" value="0"></label>
+    <label>เตือนเมื่อเหลือไม่เกิน<input name="min" type="number" min="0" value="3"></label>
+    <button class="p">เพิ่มสินค้า</button>
+  </form>
+  <datalist id="cats"><option>CPU<option>RAM<option>Storage<option>GPU<option>Mainboard<option>Monitor<option>Peripherals<option>Network</datalist>
+  <label style="margin-bottom:8px"><input id="find" placeholder="ค้นหาชื่อหรือหมวดหมู่"></label>
+  <div class="wrap">
+    <table>
+      <thead><tr><th>สินค้า</th><th>คงเหลือ</th><th>เตือนที่</th><th>สถานะ</th><th>นำเข้า / นำออก</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>ยังไม่มีสินค้า เพิ่มรายการแรกจากฟอร์มด้านบน</div>
+  </div>
+</main>
+<div id="toasts" aria-live="assertive"></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const label={ok:'ปกติ',low:'ใกล้หมด',out:'หมด'};
+let items=[],prev={};
+
+function toast(m,t){const e=document.createElement('div');e.className='toast '+(t||'');e.textContent=m;$('#toasts').append(e);setTimeout(()=>e.remove(),6000)}
+function notify(i){
+  const m=(i.status==='out'?'สินค้าหมด: ':'สินค้าใกล้หมด: ')+i.name+' (เหลือ '+i.qty+')';
+  toast(m,i.status);
+  if(window.Notification&&Notification.permission==='granted')new Notification(m);
+}
+async function api(p,d){
+  const r=await fetch(p,{method:'POST',body:new URLSearchParams(d)});
+  if(!r.ok)toast(await r.text(),'out');
+  return r.ok;
+}
+function render(){
+  const k=$('#find').value.toLowerCase();
+  const rows=items.filter(i=>(i.name+i.cat).toLowerCase().includes(k));
+  const c=s=>items.filter(i=>i.status===s).length;
+  $('#stats').innerHTML=`<span><b>${items.length}</b>รายการ</span><span class="low"><b>${c('low')}</b>ใกล้หมด</span><span class="out"><b>${c('out')}</b>หมดแล้ว</span>`;
+  $('#alerts').innerHTML=items.filter(i=>i.status!=='ok').map(i=>
+    `<div class="al ${i.status}"><b>${esc(i.name)}</b> ${i.status==='out'?'หมดสต็อกแล้ว':'เหลือ '+i.qty+' ชิ้น (เตือนที่ '+i.min+')'}</div>`).join('');
+  $('#empty').hidden=rows.length>0;
+  $('#rows').innerHTML=rows.map(i=>`<tr class="row">
+    <td><b>${esc(i.name)}</b><div class="m">${esc(i.cat)}</div></td>
+    <td>${i.qty}<div class="lv"><i class="${i.status}" style="width:${Math.min(100,i.qty/Math.max(i.min*3,1)*100)}%"></i></div></td>
+    <td>${i.min}</td>
+    <td><span class="tag ${i.status}">${label[i.status]}</span></td>
+    <td><input type="number" min="1" value="1" id="q${i.id}" aria-label="จำนวน">
+      <button onclick="act('in',${i.id})">นำเข้า</button>
+      <button onclick="act('out',${i.id})">นำออก</button>
+      <button class="x" onclick="del(${i.id})">ลบ</button></td></tr>`).join('');
+}
+async function load(){
+  try{
+    items=await (await fetch('/api/items')).json();
+    for(const i of items){const o=prev[i.id];if(o!==undefined&&o!==i.status&&i.status!=='ok')notify(i)}
+    prev=Object.fromEntries(items.map(i=>[i.id,i.status]));
+    render();
+  }catch{toast('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบว่ารัน ./inventory อยู่','out')}
+}
+async function act(op,id){if(await api('/api/'+op,{id,qty:$('#q'+id).value||1}))load()}
+async function del(id){if(confirm('ลบสินค้านี้ออกจากรายการ?')&&await api('/api/del',{id}))load()}
+$('#f').onsubmit=async e=>{e.preventDefault();if(await api('/api/add',new FormData(e.target))){e.target.reset();load()}};
+$('#find').oninput=render;
+document.addEventListener('click',()=>{if(window.Notification&&Notification.permission==='default')Notification.requestPermission()},{once:true});
+load();setInterval(load,5000);
+</script>
+</body>
+</html>
